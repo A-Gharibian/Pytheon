@@ -1,0 +1,108 @@
+#Config loader and generator 
+# A configuration generator is used in case the code is being run on a new system, for the same system, or known system, the loader module can read config from a yaml file.
+def get_system_info():
+    system_info = {
+        'memory_mb': None,
+        'cpu_architecture': None,
+        'cpu_vendor': None,
+        'num_cores': None,
+        'num_physical_cores': None,
+        'is_intel_x86': False,
+        'is_multicore': False
+    }
+# All the information is gathered to know if parallel processing and Intel sklearn patch should or should not be applied.
+    try:
+        memory = psutil.virtual_memory()
+        system_info['memory_mb'] = memory.available / (1024 ** 2)
+        print(f"Available memory: {system_info['memory_mb']:.2f} MB")
+    except Exception as e:
+        print(f"Error getting memory information: {e}")
+
+    try:
+        system_info['cpu_architecture'] = architecture = platform.machine()
+        print(f"CPU architecture: {architecture}")
+        # Try using platform.processor(), if insufficient, check /proc/cpuinfo
+        cpu_info = platform.processor().lower()
+        if 'intel' in cpu_info:
+            system_info['cpu_vendor'] = "Intel"
+            system_info['is_intel_x86'] = True
+        elif os.path.isfile('/proc/cpuinfo'):
+            # Only attempt to read /proc/cpuinfo if it exists (i.e., on Linux)
+            with open('/proc/cpuinfo', 'r') as f:
+                cpuinfo = f.read().lower()
+            if 'intel' in cpuinfo:
+                system_info['cpu_vendor'] = "Intel"
+                system_info['is_intel_x86'] = True
+            elif 'amd' in cpuinfo:
+                system_info['cpu_vendor'] = "AMD"
+        else:
+            system_info['cpu_vendor'] = "Unknown"
+
+    except Exception as e:
+        print(f"Error checking CPU architecture: {e}")
+
+    try:
+        system_info['num_cores'] = psutil.cpu_count(logical=True)
+        system_info['num_physical_cores'] = psutil.cpu_count(logical=False)
+        system_info['is_multicore'] = system_info['num_physical_cores'] >= 4
+        print(f"Available CPU cores: {system_info['num_cores']}")
+        print(f"Available physical CPU cores: {system_info['num_physical_cores']}")
+
+    except Exception as e:
+        print(f"Error getting CPU core information: {e}")
+
+    return system_info
+
+# Apply Intel sklearn patch 
+def apply_sklearn_patch(info):
+    if info['is_intel_x86']:
+        try:
+            import sklearnex
+            sklearnex.patch_sklearn()
+            print("Intel-specific optimizations applied with sklearnex.")
+        except ImportError:
+            print("Intel-specific optimizations not available. Consider installing sklearnex for better performance.")
+    else:
+        print("Non-Intel CPU detected, using standard scikit-learn without Intel optimizations.")
+
+# Write system info to a YAML config file
+def write_config_file(info, filename="config.yaml"):
+    try:
+        with open(filename, 'w') as config_file:
+            yaml.dump(info, config_file, default_flow_style=False)
+        print(f"Configuration file '{filename}' written successfully.")
+    except Exception as e:
+        print(f"Error writing config file: {e}")
+
+# Read and load YAML config file
+def read_config_file(filename="config.yaml"):
+    try:
+        with open(filename, 'r') as config_file:
+            config = yaml.safe_load(config_file)
+            print(f"Configuration file '{filename}' loaded successfully.")
+            return config
+    except Exception as e:
+        print(f"Error reading config file: {e}")
+        return None
+
+def main():
+    config_filename = "config.yaml"
+    
+    if os.path.exists(config_filename):
+        info = read_config_file(config_filename)
+    else:
+        info = get_system_info()
+        write_config_file(info)
+
+    if info['is_multicore']:
+        try:
+            global Parallel, delayed
+            from joblib import Parallel, delayed
+            print("Library joblib is available, parallel processing is enabled.")
+        except ImportError:
+            print("Joblib is not installed but would benefit performance. Consider installing it.")
+
+    apply_sklearn_patch(info)
+
+if __name__ == "__main__":
+    main()
